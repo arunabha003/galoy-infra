@@ -64,6 +64,22 @@ EOF
   popd
 }
 
+function init_bootstrap_aws() {
+  pushd bootstrap
+  cat <<EOF > override.tf
+terraform {
+  backend "kubernetes" {
+    secret_suffix = "testflight-aws"
+    namespace     = "concourse-tf"
+    config_path   = "/root/.kube/config"
+  }
+}
+EOF
+
+  tofu init
+  popd
+}
+
 function write_users() {
    echo ${TESTFLIGHT_ADMINS} | \
      jq --arg sa "$(cat ${CI_ROOT}/gcloud-creds.json | jq -r '.client_email')" \
@@ -71,6 +87,11 @@ function write_users() {
 }
 
 function write_azure_users() {
+  echo ${TESTFLIGHT_ADMINS} | \
+    jq '{ users: [ .[] | { id: ., inception: true, platform: true, logs: true, bastion: true } ]}' > inception/users.auto.tfvars.json
+}
+
+function write_aws_users() {
   echo ${TESTFLIGHT_ADMINS} | \
     jq '{ users: [ .[] | { id: ., inception: true, platform: true, logs: true, bastion: true } ]}' > inception/users.auto.tfvars.json
 }

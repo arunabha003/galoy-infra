@@ -1,7 +1,7 @@
 #@data/values
 ---
-git_uri: git@github.com:GaloyMoney/galoy-infra.git
-git_branch: main
+git_uri: https://github.com/arunabha003/galoy-infra.git
+git_branch: aws-ci-flow
 git_version_branch: testflight-name-prefix-uid-branch
 github_private_key: ((github.private_key))
 
@@ -30,3 +30,8 @@ testflight_azure_admins: ((testflight-azure-admins.users_json))
 testflight_admins: ((testflight-admins.users_json))
 testflight_ssh_private_key: ((testflight-ssh.ssh_private_key))
 testflight_ssh_pub_key: ((testflight-ssh.ssh_public_key))
+
+testflight_aws_access_key_id: ((testflight-aws-creds.access_key_id))
+testflight_aws_secret_access_key: ((testflight-aws-creds.secret_access_key))
+testflight_aws_region: ((testflight-aws-creds.region))
+testflight_aws_admins: ((testflight-aws-admins.users_json))

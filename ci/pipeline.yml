@@ -22,7 +22,11 @@
 #@   "azure_jobs",
 #@   "azure_resources")
 
-#@ supported_iaas = ["gcp", "azure"]
+#@ load("aws.lib.yml",
+#@   "aws_jobs",
+#@   "aws_resources")
+
+#@ supported_iaas = ["gcp", "azure", "aws"]
 groups:
 - name: all
   jobs:
@@ -66,6 +70,9 @@ jobs:
 #@ for/end job in azure_jobs():
 - #@ job
 
+#@ for/end job in aws_jobs():
+- #@ job
+
 - name: check-and-upgrade-k8s
   plan:
   - in_parallel:
@@ -105,6 +112,9 @@ resources:
 - #@ resource
 
 #@ for/end resource in azure_resources():
+- #@ resource
+
+#@ for/end resource in aws_resources():
 - #@ resource
 
 - name: every-1h

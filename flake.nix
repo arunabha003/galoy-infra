@@ -3,16 +3,20 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
+    # Pin to a specific commit that has fly 7.11.2
+    nixpkgs-fly.url = "github:nixos/nixpkgs/23.11";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
   outputs = {
     self,
     nixpkgs,
+    nixpkgs-fly,
     flake-utils,
   }:
     flake-utils.lib.eachDefaultSystem (system: let
       pkgs = import nixpkgs {inherit system;};
+      pkgs-fly = import nixpkgs-fly {inherit system;};
     in
       with pkgs; {
         devShells.default = mkShell
@@ -23,7 +27,8 @@
               ytt
               (azure-cli.withExtensions [azure-cli.extensions.ssh])
               jq
-              awscli 
+              awscli
+              pkgs-fly.fly
             ];
 
             shellHook = ''

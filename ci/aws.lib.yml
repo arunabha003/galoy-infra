@@ -1,0 +1,407 @@
+#@ load("@ytt:data", "data")
+
+#@ load("commons.lib.yml",
+#@   "testflight_bootstrap_job_name",
+#@   "testflight_inception_job_name",
+#@   "testflight_platform_job_name",
+#@   "testflight_postgresql_job_name",
+#@   "testflight_smoketest_job_name",
+#@   "testflight_cleanup_job_name",
+#@   "testflight_cleanup_postgresql_job_name",
+#@   "bump_repos_job_name",
+#@   "build_pipeline_image_job_name",
+#@   "modules_resource_name")
+
+#@ def pipeline_image():
+#@   return data.values.docker_registry + "/aws-infra-pipeline"
+#@ end
+
+#@ def task_image_config():
+type: registry-image
+source:
+  username: #@ data.values.gar_registry_user
+  password: #@ data.values.gar_registry_password
+  repository: #@ pipeline_image()
+#@ end
+
+#@ def aws_modules():
+name: #@ modules_resource_name("aws")
+type: git
+webhook_token: ((webhook.secret))
+source:
+  paths:
+  - modules/bootstrap/aws
+  - modules/inception/aws
+  - modules/platform/aws
+  - modules/postgresql/aws
+  - modules/smoketest
+  uri: #@ data.values.git_uri
+  branch: #@ data.values.git_branch
+  private_key: #@ data.values.github_private_key
+#@ end
+
+#@ def aws_testflight_task_params():
+AWS_ACCESS_KEY_ID: #@ data.values.testflight_aws_access_key_id
+AWS_SECRET_ACCESS_KEY: #@ data.values.testflight_aws_secret_access_key
+AWS_DEFAULT_REGION: #@ data.values.testflight_aws_region
+TESTFLIGHT_ADMINS: #@ data.values.testflight_aws_admins
+KUBE_HOST: #@ data.values.concourse_tf_kube_host
+KUBE_CA_CERT: #@ data.values.concourse_tf_kube_ca_cert
+KUBE_TOKEN: #@ data.values.concourse_tf_kube_token
+BRANCH: #@ data.values.git_branch
+#@ end
+
+#@ def aws_testflight_bootstrap_job():
+name: #@ testflight_bootstrap_job_name("aws")
+serial: true
+plan:
+- put: aws-testflight-lock
+  params: { claim: aws-testflight }
+- in_parallel:
+  - get: #@ modules_resource_name("aws")
+    trigger: true
+  - { get: repo }
+  - { get: pipeline-tasks }
+  - { get: aws-testflight-uid }
+- task: bootstrap
+  attempts: 4
+  config:
+    platform: linux
+    image_resource: #@ task_image_config()
+    inputs:
+    - name: pipeline-tasks
+    - name: repo
+    - name: #@ modules_resource_name("aws")
+      path: modules
+    - name: aws-testflight-uid
+      path: testflight-uid
+    params: #@ aws_testflight_task_params()
+    run:
+      path: pipeline-tasks/ci/tasks/aws/bootstrap.sh
+#@ end
+
+#@ def aws_testflight_inception_job():
+name: #@ testflight_inception_job_name("aws")
+serial: true
+plan:
+- get: aws-testflight-lock
+  passed:
+  - #@ testflight_bootstrap_job_name("aws")
+- in_parallel:
+  - get: #@ modules_resource_name("aws")
+    trigger: true
+    passed:
+    - #@ testflight_bootstrap_job_name("aws")
+  - get: repo
+    passed:
+    - #@ testflight_bootstrap_job_name("aws")
+  - { get: pipeline-tasks }
+  - get: aws-testflight-uid
+    passed:
+    - #@ testflight_bootstrap_job_name("aws")
+- task: inception
+  attempts: 4
+  config:
+    platform: linux
+    image_resource: #@ task_image_config()
+    inputs:
+    - name: pipeline-tasks
+    - name: repo
+    - name: #@ modules_resource_name("aws")
+      path: modules
+    - name: aws-testflight-uid
+      path: testflight-uid
+    params: #@ aws_testflight_task_params()
+    run:
+      path: pipeline-tasks/ci/tasks/aws/inception.sh
+#@ end
+
+#@ def aws_testflight_platform_job():
+name: #@ testflight_platform_job_name("aws")
+serial: true
+plan:
+- get: aws-testflight-lock
+  passed:
+  - #@ testflight_inception_job_name("aws")
+- in_parallel:
+  - get: #@ modules_resource_name("aws")
+    trigger: true
+    passed:
+    - #@ testflight_inception_job_name("aws")
+  - get: repo
+    passed:
+    - #@ testflight_inception_job_name("aws")
+  - { get: pipeline-tasks }
+  - get: aws-testflight-uid
+    passed:
+    - #@ testflight_inception_job_name("aws")
+- task: platform
+  config:
+    platform: linux
+    image_resource: #@ task_image_config()
+    inputs:
+    - name: pipeline-tasks
+    - name: repo
+    - name: #@ modules_resource_name("aws")
+      path: modules
+    - name: aws-testflight-uid
+      path: testflight-uid
+    params: #@ aws_testflight_task_params()
+    run:
+      path: pipeline-tasks/ci/tasks/aws/platform.sh
+#@ end
+
+#@ def aws_testflight_smoketest_job():
+name: #@ testflight_smoketest_job_name("aws")
+serial: true
+plan:
+- get: aws-testflight-lock
+  passed:
+  - #@ testflight_platform_job_name("aws")
+- in_parallel:
+  - get: #@ modules_resource_name("aws")
+    trigger: true
+    passed:
+    - #@ testflight_platform_job_name("aws")
+  - get: repo
+    passed:
+    - #@ testflight_platform_job_name("aws")
+  - { get: pipeline-tasks }
+  - get: aws-testflight-uid
+    passed:
+    - #@ testflight_platform_job_name("aws")
+- task: smoketest
+  config:
+    platform: linux
+    image_resource: #@ task_image_config()
+    inputs:
+    - name: pipeline-tasks
+    - name: repo
+    - name: #@ modules_resource_name("aws")
+      path: modules
+    - name: aws-testflight-uid
+      path: testflight-uid
+    params: #@ aws_testflight_task_params()
+    run:
+      path: pipeline-tasks/ci/tasks/aws/smoketest.sh
+#@ end
+
+#@ def aws_testflight_postgresql_job():
+name: #@ testflight_postgresql_job_name("aws")
+serial: true
+plan:
+- get: aws-testflight-lock
+  passed:
+  - #@ testflight_inception_job_name("aws")
+- in_parallel:
+  - get: #@ modules_resource_name("aws")
+    trigger: true
+    passed:
+    - #@ testflight_inception_job_name("aws")
+  - get: repo
+    passed:
+    - #@ testflight_inception_job_name("aws")
+  - { get: pipeline-tasks }
+  - get: aws-testflight-uid
+    passed:
+    - #@ testflight_inception_job_name("aws")
+- task: postgresql
+  attempts: 4
+  config:
+    platform: linux
+    image_resource: #@ task_image_config()
+    inputs:
+    - name: pipeline-tasks
+    - name: repo
+    - name: #@ modules_resource_name("aws")
+      path: modules
+    - name: aws-testflight-uid
+      path: testflight-uid
+    params: #@ aws_testflight_task_params()
+    run:
+      path: pipeline-tasks/ci/tasks/aws/postgresql.sh
+#@ end
+
+#@ def aws_testflight_cleanup_job():
+name: #@ testflight_cleanup_job_name("aws")
+serial: true
+plan:
+- get: aws-testflight-lock
+  passed:
+  - #@ testflight_smoketest_job_name("aws")
+- in_parallel:
+  - get: #@ modules_resource_name("aws")
+    trigger: true
+    passed:
+    - #@ testflight_smoketest_job_name("aws")
+  - get: repo
+    passed:
+    - #@ testflight_smoketest_job_name("aws")
+  - { get: pipeline-tasks }
+  - get: aws-testflight-uid
+    passed:
+    - #@ testflight_smoketest_job_name("aws")
+- task: teardown
+  config:
+    platform: linux
+    image_resource: #@ task_image_config()
+    inputs:
+    - name: pipeline-tasks
+    - name: repo
+    - name: #@ modules_resource_name("aws")
+      path: modules
+    - name: aws-testflight-uid
+      path: testflight-uid
+    params: #@ aws_testflight_task_params()
+    run:
+      path: pipeline-tasks/ci/tasks/aws/teardown.sh
+  ensure:
+    put: aws-testflight-lock
+    params: { release: aws-testflight }
+#@ end
+
+#@ def aws_testflight_cleanup_postgresql_job():
+name: #@ testflight_cleanup_postgresql_job_name("aws")
+serial: true
+plan:
+- get: aws-testflight-lock
+  passed:
+  - #@ testflight_postgresql_job_name("aws")
+- in_parallel:
+  - get: #@ modules_resource_name("aws")
+    trigger: true
+    passed:
+    - #@ testflight_postgresql_job_name("aws")
+  - get: repo
+    passed:
+    - #@ testflight_postgresql_job_name("aws")
+  - { get: pipeline-tasks }
+  - get: aws-testflight-uid
+    passed:
+    - #@ testflight_postgresql_job_name("aws")
+- task: teardown-postgresql
+  config:
+    platform: linux
+    image_resource: #@ task_image_config()
+    inputs:
+    - name: pipeline-tasks
+    - name: repo
+    - name: #@ modules_resource_name("aws")
+      path: modules
+    - name: aws-testflight-uid
+      path: testflight-uid
+    params: #@ aws_testflight_task_params()
+    run:
+      path: pipeline-tasks/ci/tasks/aws/teardown-postgresql.sh
+#@ end
+
+#@ def aws_bump_repos_job():
+name: #@ bump_repos_job_name("aws")
+plan:
+- in_parallel:
+  - get: every-1h
+    trigger: true
+  - get: #@ modules_resource_name("aws")
+  - get: repo
+  - get: pipeline-tasks
+- task: bump-repos
+  config:
+    platform: linux
+    image_resource: #@ task_image_config()
+    inputs:
+    - name: pipeline-tasks
+    - name: repo
+    - name: #@ modules_resource_name("aws")
+      path: modules
+    outputs:
+    - name: repo
+    params:
+      BRANCH: #@ data.values.git_branch
+      AWS_ACCESS_KEY_ID: #@ data.values.testflight_aws_access_key_id
+      AWS_SECRET_ACCESS_KEY: #@ data.values.testflight_aws_secret_access_key
+    run:
+      path: pipeline-tasks/ci/tasks/aws/bump-repos.sh
+- put: repo
+  params:
+    repository: repo
+    rebase: true
+#@ end
+
+#@ def aws_build_pipeline_image_job():
+name: #@ build_pipeline_image_job_name("aws")
+plan:
+- in_parallel:
+  - get: repo
+    trigger: true
+  - get: pipeline-tasks
+- task: build
+  privileged: true
+  config:
+    platform: linux
+    image_resource:
+      type: registry-image
+      source:
+        repository: concourse/oci-build-task
+    inputs:
+    - name: repo
+    - name: pipeline-tasks
+    outputs:
+    - name: image
+    params:
+      CONTEXT: pipeline-tasks/ci/image/aws
+    run:
+      path: build
+- put: aws-pipeline-image
+  params:
+    image: image/image.tar
+#@ end
+
+#@ def aws_jobs():
+#@   return [
+#@     aws_testflight_bootstrap_job(),
+#@     aws_testflight_inception_job(),
+#@     aws_testflight_platform_job(),
+#@     aws_testflight_smoketest_job(),
+#@     aws_testflight_postgresql_job(),
+#@     aws_testflight_cleanup_job(),
+#@     aws_testflight_cleanup_postgresql_job(),
+#@     aws_bump_repos_job(),
+#@     aws_build_pipeline_image_job()
+#@   ]
+#@ end
+
+#@ def aws_resources():
+#@   return [
+#@     aws_modules(),
+#@     {
+#@       "name": "aws-testflight-lock",
+#@       "type": "pool",
+#@       "source": {
+#@         "pool": "aws-testflight",
+#@         "uri": data.values.concourse_locks_git_uri,
+#@         "branch": "main",
+#@         "private_key": data.values.github_private_key
+#@       }
+#@     },
+#@     {
+#@       "name": "aws-testflight-uid",
+#@       "type": "semver",
+#@       "source": {
+#@         "driver": "git",
+#@         "uri": data.values.concourse_locks_git_uri,
+#@         "branch": "main",
+#@         "private_key": data.values.github_private_key,
+#@         "file": "aws-testflight-uid"
+#@       }
+#@     },
+#@     {
+#@       "name": "aws-pipeline-image",
+#@       "type": "registry-image",
+#@       "source": {
+#@         "repository": pipeline_image(),
+#@         "username": data.values.gar_registry_user,
+#@         "password": data.values.gar_registry_password
+#@       }
+#@     }
+#@   ]
+#@ end 
